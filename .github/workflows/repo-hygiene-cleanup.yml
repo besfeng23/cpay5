@@ -1,0 +1,85 @@
+name: Repo Hygiene Cleanup
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/repo-hygiene-cleanup.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    name: Create repo hygiene cleanup PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Prepare cleanup branch
+        run: |
+          set -euo pipefail
+
+          cleanup_branch="CU-86d36hu0d-repo-hygiene-ci"
+
+          git fetch origin main
+          git checkout -B "$cleanup_branch" origin/main
+
+          git rm -r --cached functions/node_modules 2>/dev/null || true
+
+          touch .gitignore
+          grep -qxF "/functions/node_modules" .gitignore || printf '\n/functions/node_modules\n' >> .gitignore
+          grep -qxF "**/node_modules" .gitignore || printf '**/node_modules\n' >> .gitignore
+
+          git add .gitignore
+
+          if git diff --cached --quiet; then
+            echo "NO_CLEANUP_CHANGES=true" >> "$GITHUB_ENV"
+            echo "No cleanup changes found."
+            exit 0
+          fi
+
+          git status --short
+          git commit -m "chore: remove tracked dependency output"
+          git push --force-with-lease origin "$cleanup_branch"
+
+      - name: Create or update cleanup PR
+        if: env.NO_CLEANUP_CHANGES != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          cleanup_branch="CU-86d36hu0d-repo-hygiene-ci"
+          existing_pr="$(gh pr list --head "$cleanup_branch" --base main --json number --jq '.[0].number // empty')"
+
+          pr_body='## Linked issue
+Closes #10
+
+## What this PR does
+- Removes tracked dependency output from Git tracking.
+- Adds ignore rules for nested dependency folders.
+
+## Scope
+Repo hygiene only. No app business logic should be changed.
+
+## Review notes
+Run CI before merging. Speedcash remains NO-GO until CI is green.'
+
+          if [ -n "$existing_pr" ]; then
+            gh pr edit "$existing_pr" --title "CU-86d36hu0d: Remove tracked dependency output" --body "$pr_body"
+          else
+            gh pr create --base main --head "$cleanup_branch" --title "CU-86d36hu0d: Remove tracked dependency output" --body "$pr_body"
+          fi
