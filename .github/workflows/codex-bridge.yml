@@ -1,0 +1,82 @@
+name: Codex Bridge
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+
+jobs:
+  trigger-codex:
+    name: Trigger Codex from approved PR label
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'codex-ready'
+    steps:
+      - name: Post Codex task comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const labels = issue.labels.map((label) => label.name);
+            const marker = '<!-- codex-bridge-trigger -->';
+            const highRiskLabels = [
+              'production-critical',
+              'wallet',
+              'ledger',
+              'cash-in',
+              'cash-out',
+              'provider',
+              'auth',
+              'firebase-rules',
+              'deployment'
+            ];
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: issue.number,
+              per_page: 100
+            });
+
+            if (comments.some((comment) => comment.body && comment.body.includes(marker))) {
+              core.info('Codex bridge comment already exists. Skipping duplicate trigger.');
+              return;
+            }
+
+            if (!issue.pull_request) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: `${marker}\nCodex bridge did not run because this is an issue, not a pull request. Create a draft PR first, then add the codex-ready label to the PR.`
+              });
+              return;
+            }
+
+            const hasHighRiskLabel = labels.some((label) => highRiskLabels.includes(label));
+            const hasHumanApproval = labels.includes('codex-approved');
+
+            if (hasHighRiskLabel && !hasHumanApproval) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: `${marker}\nCodex bridge blocked this PR because it has a high-risk label. Add the codex-approved label after human review if this task should run.`
+              });
+              return;
+            }
+
+            const body = (issue.body || '').slice(0, 6000);
+            const comment = `${marker}\n@codex\n\nRun this Speedcash pull request task.\n\nTitle: ${issue.title}\n\nURL: ${issue.html_url}\n\nInstructions:\n- Work only in this pull request branch.\n- Keep changes limited to the PR body and task scope.\n- Do not broaden scope.\n- Add or update tests when code changes.\n- Run available checks and report results.\n- If the task touches high-risk payment, wallet, provider, auth, rule, or deployment areas, stop and ask for human approval.\n\nTask body:\n${body}`;
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: comment
+            });
