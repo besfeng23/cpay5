@@ -6,12 +6,12 @@ on:
 
 permissions:
   issues: write
-  pull-requests: write
+  pull-requests: read
   contents: read
 
 jobs:
   trigger-codex:
-    name: Trigger Codex from approved task label
+    name: Trigger Codex from approved PR label
     runs-on: ubuntu-latest
     if: github.event.label.name == 'codex-ready'
     steps:
@@ -35,8 +35,6 @@ jobs:
               'firebase-rules',
               'deployment'
             ];
-            const hasHighRiskLabel = labels.some((label) => highRiskLabels.includes(label));
-            const hasHumanApproval = labels.includes('codex-approved');
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
@@ -50,19 +48,31 @@ jobs:
               return;
             }
 
+            if (!issue.pull_request) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: `${marker}\nCodex bridge did not run because this is an issue, not a pull request. Create a draft PR first, then add the codex-ready label to the PR.`
+              });
+              return;
+            }
+
+            const hasHighRiskLabel = labels.some((label) => highRiskLabels.includes(label));
+            const hasHumanApproval = labels.includes('codex-approved');
+
             if (hasHighRiskLabel && !hasHumanApproval) {
               await github.rest.issues.createComment({
                 owner,
                 repo,
                 issue_number: issue.number,
-                body: `${marker}\nCodex bridge blocked this task because it has a high-risk label. Add the codex-approved label after human review if this task should run.`
+                body: `${marker}\nCodex bridge blocked this PR because it has a high-risk label. Add the codex-approved label after human review if this task should run.`
               });
               return;
             }
 
             const body = (issue.body || '').slice(0, 6000);
-            const taskType = issue.pull_request ? 'pull request' : 'issue';
-            const comment = `${marker}\n@codex\n\nRun this Speedcash ${taskType} task.\n\nTitle: ${issue.title}\n\nURL: ${issue.html_url}\n\nInstructions:\n- Create or update one focused branch and pull request only.\n- Keep changes limited to the task body.\n- Do not broaden scope.\n- Add or update tests when code changes.\n- Run available checks and report results.\n- If the task touches high-risk payment, wallet, provider, auth, rule, or deployment areas, stop and ask for human approval.\n\nTask body:\n${body}`;
+            const comment = `${marker}\n@codex\n\nRun this Speedcash pull request task.\n\nTitle: ${issue.title}\n\nURL: ${issue.html_url}\n\nInstructions:\n- Work only in this pull request branch.\n- Keep changes limited to the PR body and task scope.\n- Do not broaden scope.\n- Add or update tests when code changes.\n- Run available checks and report results.\n- If the task touches high-risk payment, wallet, provider, auth, rule, or deployment areas, stop and ask for human approval.\n\nTask body:\n${body}`;
 
             await github.rest.issues.createComment({
               owner,
