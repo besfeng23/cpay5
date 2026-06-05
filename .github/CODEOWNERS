@@ -1,0 +1,11 @@
+# Speedcash review ownership
+# Keep this simple until the team expands.
+
+* @besfeng23
+
+# High-risk paths
+firestore.rules @besfeng23
+storage.rules @besfeng23
+functions/** @besfeng23
+.github/workflows/** @besfeng23
+apphosting.yaml @besfeng23
